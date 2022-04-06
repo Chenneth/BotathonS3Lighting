@@ -22,7 +22,7 @@ config['DEFAULT'] = {
     "SDTime": "90",
     "Countdown": "FFFFFF",
     "TimerNormal": "00FF00",
-    "LowTime": "00FCFC",
+    "LowTimeColor": "00FCFC",
     "GoalScored": "0000FF",
     "TimeUp": "FF0000",
     "IdleOne": "FFFFFF",
@@ -32,7 +32,6 @@ config['DEFAULT'] = {
     "SuddenDeath":"FF0000",
     "LEDCount": "300"
 }
-#todo: config IdleLights in behavior doesnt do anything
 
 # color configs
 temp = config.get("COLORS", "Countdown")
@@ -41,7 +40,7 @@ COLOR_COUNTDOWN = (int(temp[:2], 16), int(temp[2:4], 16), int(temp[4:6], 16))
 temp = config.get("COLORS", "TimerNormal")
 COLOR_TIMER = (int(temp[:2], 16), int(temp[2:4], 16), int(temp[4:6], 16))
 
-temp = config.get("COLORS", "LowTime")
+temp = config.get("COLORS", "LowTimeColor")
 COLOR_LOWTIME = (int(temp[:2], 16), int(temp[2:4], 16), int(temp[4:6], 16))
 
 temp = config.get("COLORS", "GoalScored")
@@ -69,6 +68,7 @@ COLOR_SD = (int(temp[:2], 16), int(temp[2:4], 16), int(temp[4:6], 16))
 STARTCOUNTDOWN = config.getboolean("BEHAVIOR", "StartCountdown")
 YELLOWSWITCH = config.getint("BEHAVIOR", "YellowSwitch")
 AUTOTERM = config.getint("BEHAVIOR", "AutoTerm")
+IDLELIGHTS = config.getboolean("BEHAVIOR", "IdleLights")
 
 # time configs
 TIMERTIME = float(config.getint("TIMER", "StartTime"))
@@ -154,6 +154,7 @@ def Goal():
 #please give this 'pipeBack' and not 'pipeFront' (it shouldn't matter but keep it consistent)
 def Countdown_Normal(pipe:multiprocessing.connection):
     pixels.fill(COLOR_TIMER)
+    pixels.brightness = 1.0
     pixels.show()
     totalSeconds = TIMERTIME
     while totalSeconds > LOWTIME and totalSeconds>-1:  # 30 seconds is when it switches to yellow
@@ -182,48 +183,55 @@ def Countdown_Normal(pipe:multiprocessing.connection):
             else:
                 print("\nNot a valid input.\n")
             pipe.send("start up b")
-    start = time.time()
-    offset=0.0
-    for x in range(300):
-        pixels[x] = (255, 255, 0)
-        pixels.show()
-        #checking this every loop because the lights don't update immediately (there's like a .5 second delay or something
-        if pipe.poll():
-            msg = pipe.recv()
-            if msg[:1]=="a":
-                try:
-                    totalSeconds += int(msg[2:]) - (time.time()-start - offset)
-                    start = time.time()
-                    offset = 0.0
-                    print("Total time is now {}".format(totalSeconds))
-                except (TypeError, ValueError):
-                    print("Could not add the timer due to an error")
-            elif msg[:1]=="v":
-                print("Current time on the timer is {} seconds".format(totalSeconds))
-            elif msg[:1]=="p" or msg[:1]=="g":
+    if YELLOWSWITCH==1:
+        start = time.time()
+        offset = 0.0
+        for x in range(300):
+            pixels[x] = (COLOR_LOWTIME)
+            pixels.show()
+            #checking this every loop because the lights don't update immediately (there's like a .5 second delay or something
+            if pipe.poll():
+                msg = pipe.recv()
+                if msg[:1]=="a":
+                    try:
+                        totalSeconds += int(msg[2:]) - (time.time()-start - offset)
+                        start = time.time()
+                        offset = 0.0
+                        print("Total time is now {}".format(totalSeconds))
+                    except (TypeError, ValueError):
+                        print("Could not add the timer due to an error")
+                elif msg[:1]=="v":
+                    print("Current time on the timer is {} seconds".format(totalSeconds))
+                elif msg[:1]=="p" or msg[:1]=="g":
 
-                tempList = CopyCurrentColors()
-                if msg[:1]=="p":
-                    pixels.fill((47,47,79))
-                    pixels.brightness = .3
+                    tempList = CopyCurrentColors()
+                    if msg[:1]=="p":
+                        pixels.fill((47,47,79))
+                        pixels.brightness = .3
+                        pixels.show()
+                        print("Timer currently paused. Waiting.\n")
+                    elif msg[:1]=="g":
+                        Goal()
+                    midStart = time.time()
+                    pipe.recv()
+                    offset+= time.time()-midStart
+                    print("Resuming timer.")
+                    StartDelayCount()
+                    PasteCurrentColors(tempList)
                     pixels.show()
-                    print("Timer currently paused. Waiting.\n")
-                elif msg[:1]=="g":
-                    Goal()
-                midStart = time.time()
-                pipe.recv()
-                offset+= time.time()-midStart
-                print("Resuming timer.")
-                StartDelayCount()
-                PasteCurrentColors(tempList)
-                pixels.show()
-            pipe.send("start up b")
-    totalSeconds -= float(time.time()-start - offset)
+                pipe.send("start up b")
 
+            #exit animation if it takes more time than the current timer has
+            if (time.time()-start-offset)>=totalSeconds:
+                break
+        totalSeconds -= float(time.time()-start - offset)
+    elif YELLOWSWITCH==2:
+        pixels.fill(COLOR_LOWTIME)
+        pixels.show()
     #todo: Should this be 0 or -1?
     while totalSeconds > -1:  # 30 seconds is when it switches to yellow
-        time.sleep(1)
-        totalSeconds -= 1
+        time.sleep(.1)
+        totalSeconds -= .1
         if pipe.poll():
             msg = pipe.recv()
             #add time to the timer, i really don't feel like fixing the colors on this though, will ask seb
@@ -235,15 +243,17 @@ def Countdown_Normal(pipe:multiprocessing.connection):
                     print("Could not add the timer due to an error")
             elif msg[:1]=="v":
                 print("Current time on the timer is {} seconds".format(totalSeconds))
-            elif msg[:1]=="p" or msg[:1]=="g":
-                if msg[:1]=="p":
-                    print("Timer currently paused. Waiting.\n")
-                elif msg[:1]=="g":
-                    Goal()
-                pipe.recv()
-                print("Resuming timer.")
-                StartDelayCount()
-                pixels.fill(COLOR_LOWTIME)
+            elif msg[:1] == "p":
+                print("Timer currently paused. Waiting.\n")
+                pixels.fill((47, 47, 79))
+                pixels.brightness = .3
+                pixels.show()
+                ResumePlay(pipe,prevColor= (COLOR_TIMER if YELLOWSWITCH==0 else COLOR_LOWTIME))
+            elif msg[:1] == "g":
+                Goal()
+                ResumePlay(pipe,prevColor= (COLOR_TIMER if YELLOWSWITCH==0 else COLOR_LOWTIME))
+            else:
+                print("\nNot a valid input.\n")
             pipe.send("start up")
     pixels.fill(COLOR_TIMEUP)
     pixels.brightness = 0.5 #idk if you want me to have the brightness in the conf files too
@@ -282,7 +292,6 @@ def TimerInput(timerProcess:multiprocessing.Process,pipe:multiprocessing.connect
     pixels.fill((0,0,0))
     pixels.show()
 
-#todo: pausing creates the green instead of the red
 def SuddenDeath(pipe:multiprocessing.connection):
     pixels.fill(COLOR_SD)
     #startTime = time.time()
@@ -339,7 +348,6 @@ def ResumePlay(pipe:multiprocessing.connection, prevColor = COLOR_TIMER):
     pixels.fill(prevColor)
     pixels.show()
 
-#todo: test this
 def SwapColors(pipe:multiprocessing.connection, colorOne:(int,int,int),colorTwo:(int,int,int)):
     pixels.brightness = 1.0
     for x in range(0,300,2):
@@ -352,17 +360,14 @@ def SwapColors(pipe:multiprocessing.connection, colorOne:(int,int,int),colorTwo:
     #while no message is sent from the other end
     while not pipe.poll():
         time.sleep(0.1)
-        print("hello")
+
         timeSinceLastSwitch+=0.1
         if timeSinceLastSwitch>=0.5:
-            print("switch time up")
             if colorSwap:
-                print("colorSwap true")
                 for x in range(0, 300, 2):
                     pixels[x] = colorOne
                     pixels[x + 1] = colorTwo
             else:
-                print("Colorswpa false")
                 for x in range(0, 300, 2):
                     pixels[x] = colorTwo
                     pixels[x + 1] = colorOne
@@ -394,9 +399,9 @@ def StartTimer():
 
 def EmptyPipes(PipeFront:multiprocessing.connection, PipeBack:multiprocessing.connection):
     # clearing out the pipes... there shouldn't be more than a single message per end
-    if PipeFront.poll():
+    while PipeFront.poll():
         PipeFront.recv()
-    if PipeBack.poll():
+    while PipeBack.poll():
         PipeBack.recv()
 
 def StartSuddenDeath(PipeFront:multiprocessing.connection, PipeBack:multiprocessing.connection):
@@ -454,35 +459,54 @@ if __name__=='__main__':
         while continueProgram:
             StartTimer()
             #ask if sudden death
-            MatchOver = input("\nIs the match over? Enter 0 to reset the timer, 1 to start sudden death, or 2 to turn off all LEDs and terminate the program.\nSudden death will start with a countdown.\n")
-
+            MatchOver
+            while True:
+                MatchOver = input("\nIs the match over? Enter 0 to reset the timer, 1 to start sudden death, or 2 to turn off all LEDs and terminate the program.\nSudden death will start with a countdown.\n")
+                if MatchOver[:1]=='0' or MatchOver[:1]=='1' or MatchOver[:1]=='2':
+                    break
             if MatchOver[:1]=='2': #terminate program
                 continueProgram=False
 
             elif MatchOver[:1]=='1': #sudden death
                 StartSuddenDeath(pipeFront,pipeBack)
-                MatchOver = input("\nIs the match over? Enter 0 to reset the timer, 1 to start Shoot-Out, or 2 to turn off all LEDs and terminate the program.\n")
-
+                while True:
+                    MatchOver = input("\nIs the match over? Enter 0 to reset the timer, 1 to start Shoot-Out, or 2 to turn off all LEDs and terminate the program.\n")
+                    if MatchOver[:1]=='0' or MatchOver[:1]=='1' or MatchOver[:1]=='2':
+                        break
                 if MatchOver[:1] == '1':
                     StartShootOut(pipeFront,pipeBack)
-                    StartIdle(pipeFront,pipeBack)
+                    if IDLELIGHTS:
+                        StartIdle(pipeFront,pipeBack)
+                    else:
+                        input("\nPress Enter to start the timer.\n")
                 elif MatchOver[:1] == '2':
                     continueProgram = False #should i change this to break
                 else:
-                    StartIdle(pipeFront,pipeBack)
+                    if IDLELIGHTS:
+                        StartIdle(pipeFront, pipeBack)
+                    else:
+                        input("\nPress Enter to start the timer.\n")
 
             else:
-                StartIdle(pipeFront,pipeBack)
+                if IDLELIGHTS:
+                    StartIdle(pipeFront, pipeBack)
+                else:
+                    input("\nPress Enter to start the timer.\n")
     else:
         StartTimer()
         # ask if sudden death
-        MatchOver = input("Is the match over? Enter 0 to start sudden death, or anything else to exit.\nSudden death will start with a 3 second countdown.\n")
+        while True:
+            MatchOver = input("Is the match over? Enter 0 to start sudden death, or anything else to exit.\nSudden death will start with a 3 second countdown.\n")
+            if MatchOver[:1] == '0' or MatchOver[:1] == '1' or MatchOver[:1] == '2':
+                break
         if MatchOver[:1] == '0':  # sudden death
             StartSuddenDeath(pipeFront,pipeBack)
-
-            MatchOver = input("\nIs the match over? Enter 0 to start Shoot-Out, or anything else to exit.\n")
+            while True:
+                MatchOver = input("\nIs the match over? Enter 0 to start Shoot-Out, or anything else to exit.\n")
+                if MatchOver[:1]=='0' or MatchOver[:1]=='1' or MatchOver[:1]=='2':
+                    break
             if MatchOver[:1] == '0':
                 StartShootOut(pipeFront, pipeBack)
-                StartIdle(pipeFront, pipeBack)
+        print("exiting")
 
     pixels.deinit() #i thought that this would need more than 1 line lmao
