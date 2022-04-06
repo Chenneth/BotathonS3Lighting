@@ -117,17 +117,27 @@ def PasteCurrentColors(ColorsList):
 def Goal():
     for x in range(pxlCnt):
         pixels[x]=COLOR_GOALSCORED
+    pixels.brightness = 1.0
     pixels.show()
     time.sleep(.25)
+    while pixels.brightness > 0.25:
+        pixels.brightness-=0.05
+        pixels.show()
+        time.sleep(.025)
     pixels.brightness = 0.5
     pixels.show()
-    time.sleep(.25)
+    while pixels.brightness<1.0:
+        pixels.brightness+=0.05
+        pixels.show()
+        time.sleep(.025)
     pixels.brightness = 1.0
-    while pixels.brightness > 0.1:
-        pixels.brightness-=.15 #todo: dunno if it'll work with this (lowest i've tested is .25 increments
+    time.sleep(3)
+    while pixels.brightness > 0.05:
+        pixels.brightness-=.05 #todo: dunno if it'll work with this (lowest i've tested is .25 increments
                                     #uhh basically, floats are funny and idk the gimmicks too much (had this problem with Unity too)
+        pixels.show()
         time.sleep(.05)
-    pixels.fill(0,0,0)
+    pixels.fill((0,0,0))
     pixels.brightness=1.0
     pixels.show()
 
@@ -139,44 +149,53 @@ def Countdown_Normal(pipe:multiprocessing.connection):
     while totalSeconds > LOWTIME:  # 30 seconds is when it switches to yellow
         time.sleep(.1)
         totalSeconds -= .1
-        if not pipe.poll():
-            print("queue ain't empty")
+        if pipe.poll():
             msg = pipe.recv()
             print(msg)
             if msg[:1]=="a":
                 try:
                     totalSeconds += int(msg[2:])
+                    print("Total time is now {}".format(totalSeconds))
                 except:
                     print("Could not add the timer due to an error")
             else:
                 if msg[:1]=="p":
                     print("Timer currently paused. Waiting.\n")
+                    pixels.fill((47,47,79))
+                    pixels.brightness = .3
+                    pixels.show()
                 elif msg[:1]=="g":
                     Goal()
-                pixels.show()
                 pipe.recv()
+                pixels.fill((0,0,0))
+                pixels.brightness = 1.0
+                pixels.show()
                 print("Resuming timer.")
                 StartDelayCount()
                 pixels.fill(COLOR_TIMER)
-        else:
-            print("queue was empty")
+                pixels.show()
     start = time.time()
     offset=0.0
     for x in range(300):
         pixels[x] = (255, 255, 0)
         pixels.show()
         #checking this every loop because the lights don't update immediately (there's like a .5 second delay or something
-        if not pipe.poll():
+        if pipe.poll():
             msg = pipe.recv()
             if msg[:1]=="a":
                 try:
-                    totalSeconds += int(msg[2:])
+                    totalSeconds += int(msg[2:]) - (time.time()-start - offset)
+                    start = time.time()
+                    offset = 0.0
+                    print("Total time is now {}".format(totalSeconds))
                 except:
                     print("Could not add the timer due to an error")
             else:
                 tempList = CopyCurrentColors()
                 if msg[:1]=="p":
-                    pixels.fill(255,255,255)
+                    pixels.fill((47,47,79))
+                    pixels.brightness = .3
+                    pixels.show()
                     print("Timer currently paused. Waiting.\n")
                 elif msg[:1]=="g":
                     Goal()
@@ -186,17 +205,19 @@ def Countdown_Normal(pipe:multiprocessing.connection):
                 print("Resuming timer.")
                 StartDelayCount()
                 PasteCurrentColors(tempList)
-    totalSeconds -= time.time()-start - offset
+                pixels.show()
+    totalSeconds -= float(time.time()-start - offset)
 
     while totalSeconds > -1:  # 30 seconds is when it switches to yellow
         time.sleep(1)
         totalSeconds -= 1
-        if not pipe.poll():
+        if pipe.poll():
             msg = pipe.recv()
             #add time to the timer, i really don't feel like fixing the colors on this though, will ask seb
             if msg[:1]=="a":
                 try:
                     totalSeconds += int(msg[2:])
+                    print("Total time is now {}".format(totalSeconds))
                 except:
                     print("Could not add the timer due to an error")
             else:
@@ -209,6 +230,11 @@ def Countdown_Normal(pipe:multiprocessing.connection):
                 StartDelayCount()
                 pixels.fill(COLOR_LOWTIME)
 
+    pixels.fill(COLOR_TIMEUP)
+    pixels.brightness = 0.5 #idk if you want me to have the brightness in the conf files too
+    pixels.show()
+
+    print("time's up")
 
 def at_exit():
     global processes
@@ -287,7 +313,7 @@ if __name__=='__main__':
             TimerInput(timerProcess,pipeFront)
             timerProcess.close()
             #inputProcess.terminate()
-            processes.pop(1)
+            processes.pop(0)
             #ask if sudden death
             MatchOver = input("Is the match over? Enter 0 to reset the timer, 1 to start sudden death, or 2 to turn off all LEDs and terminate the program.\nSudden death will start with a countdown.\n")
             if MatchOver==2: #terminate program
@@ -305,7 +331,7 @@ if __name__=='__main__':
                 #timerProcess.join()
 
                 timerProcess.close()
-                processes.pop(1)
+                processes.pop(0)
             else:
                 continue #unnecessary but I'm really too tired to see anything rn
 
