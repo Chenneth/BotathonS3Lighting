@@ -234,7 +234,7 @@ def Countdown_Normal(pipe:multiprocessing.connection):
     pixels.brightness = 0.5 #idk if you want me to have the brightness in the conf files too
     pixels.show()
 
-    print("time's up")
+    print("Time's up. Enter any key to move to the next dialogue. Lights will turn off immediately.\n")
 
 def at_exit():
     global processes
@@ -260,19 +260,21 @@ def TimerInput(timerProcess:multiprocessing.Process,pipe:multiprocessing.connect
             pipe.send(secmsg)
         # i know this prevents rapid pausing and unpausing... but i don't have a good way to test this rn
         time.sleep(.2)
+    pixels.brightness = 0.0
+    pixels.fill((0,0,0))
+    pixels.show()
 
 #todo: idk if this works (i imported
-def SuddenDeath(queue:multiprocessing.Queue):
-    a = (255, 0, 0)
-    for x in range(300):
-        pixels[x] = a
+def SuddenDeath(pipe:multiprocessing.connection):
+
+    pixels.fill(COLOR_SD)
     startTime = time.time()
 
     goingDown = True
-    brightness = 1.0
+    brightness = 1.0 #this is probably not necessary... but if it ain't broke....
     pixels.brightness = 1.0
     pixels.show()
-
+    
     while time.time() - startTime < 30:
         brightness = brightness - .025 if goingDown else brightness + .025
         if brightness < .2:
@@ -282,6 +284,31 @@ def SuddenDeath(queue:multiprocessing.Queue):
         pixels.brightness = brightness
         pixels.show()
         time.sleep(.05)
+        if pipe.poll():
+            msg = pipe.recv()
+            print(msg)
+            if msg[:1]=="a":
+                try:
+                    totalSeconds += int(msg[2:])
+                    print("Total time is now {}".format(totalSeconds))
+                except:
+                    print("Could not add the timer due to an error")
+            else:
+                if msg[:1]=="p":
+                    print("Timer currently paused. Waiting.\n")
+                    pixels.fill((47,47,79))
+                    pixels.brightness = .3
+                    pixels.show()
+                elif msg[:1]=="g":
+                    Goal()
+                pipe.recv()
+                pixels.fill((0,0,0))
+                pixels.brightness = 1.0
+                pixels.show()
+                print("Resuming timer.")
+                StartDelayCount()
+                pixels.fill(COLOR_TIMER)
+                pixels.show()
 
 
 if __name__=='__main__':
@@ -312,29 +339,83 @@ if __name__=='__main__':
             #timerProcess.join()
             TimerInput(timerProcess,pipeFront)
             timerProcess.close()
+
+            #clearing out the pipes... there shouldn't be more than a single message per end
+            if pipeFront.poll():
+                pipeFront.recv()
+            if pipeBack.poll():
+                pipeBack.recv()
             #inputProcess.terminate()
             processes.pop(0)
             #ask if sudden death
             MatchOver = input("Is the match over? Enter 0 to reset the timer, 1 to start sudden death, or 2 to turn off all LEDs and terminate the program.\nSudden death will start with a countdown.\n")
-            if MatchOver==2: #terminate program
+            if MatchOver[:1]=='2': #terminate program
                 continueProgram=False
-            elif MatchOver==1: #sudden death
-                timerProcess = multiprocessing.Process(target=SuddenDeath,args=[pipeBack])
+            elif MatchOver[:1]=='1': #sudden death
+                sdProcess = multiprocessing.Process(target=SuddenDeath,args=[pipeBack])
                 #yes i ctrlc ctrlv the next 9 lines, no i am not removing the comments
                 #inputProcess = multiprocessing.Process(target=TimerInput, args=[queue])
-                
-                timerProcess.start()
-                processes.append(timerProcess)
-                TimerInput(timerProcess,pipeFront)
+                StartDelayCount()
+                sdProcess.start()
+                processes.append(sdProcess)
+                TimerInput(sdProcess,pipeFront)
                 #inputProcess.start()
                 # am i doing this right?
                 #timerProcess.join()
 
-                timerProcess.close()
+                sdProcess.close()
+                # clearing out the pipes... there shouldn't be more than a single message per end
+                if pipeFront.poll():
+                    pipeFront.recv()
+                if pipeBack.poll():
+                    pipeBack.recv()
                 processes.pop(0)
             else:
                 continue #unnecessary but I'm really too tired to see anything rn
+    else:
+        if STARTCOUNTDOWN:
+            StartDelayCount()
+        # idk how to use Pools so I won't
+        timerProcess = multiprocessing.Process(target=Countdown_Normal, args=[pipeBack])
+        # inputProcess = multiprocessing.Process(target=TimerInput,args=[queue])
+        processes.append(timerProcess)
+        timerProcess.start()
+        # inputProcess.start()
+        # am i doing this right?
+        # timerProcess.join()
+        TimerInput(timerProcess, pipeFront)
+        timerProcess.close()
+        # clearing out the pipes... there shouldn't be more than a single message per end
+        if pipeFront.poll():
+            pipeFront.recv()
+        if pipeBack.poll():
+            pipeBack.recv()
+        # inputProcess.terminate()
+        processes.pop(0)
+        # ask if sudden death
+        MatchOver = input(
+            "Is the match over? Enter 0 to reset the timer, 1 to start sudden death, or 2 to turn off all LEDs and terminate the program.\nSudden death will start with a countdown.\n")
+        if MatchOver[:1] == '2':  # terminate program
+            continueProgram = False
+        elif MatchOver[:1] == '1':  # sudden death
+            sdProcess = multiprocessing.Process(target=SuddenDeath, args=[pipeBack])
+            # yes i ctrlc ctrlv the next 9 lines, no i am not removing the comments
+            # inputProcess = multiprocessing.Process(target=TimerInput, args=[queue])
+            StartDelayCount()
+            sdProcess.start()
+            processes.append(sdProcess)
+            TimerInput(sdProcess, pipeFront)
+            # inputProcess.start()
+            # am i doing this right?
+            # timerProcess.join()
 
+            sdProcess.close()
+            # clearing out the pipes... there shouldn't be more than a single message per end
+            if pipeFront.poll():
+                pipeFront.recv()
+            if pipeBack.poll():
+                pipeBack.recv()
+            processes.pop(0)
 
     
 #todo: deinit the LEDs and stuff
