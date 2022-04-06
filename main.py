@@ -69,7 +69,8 @@ pxlCnt = config.getint("MISC", "LEDCount")
 pixels = neopixel.NeoPixel(board.D18, pxlCnt, auto_write=False)
 
 
-queue = multiprocessing.Queue()
+#queue = multiprocessing.Queue()
+pipeFront, pipeBack = multiprocessing.Pipe()
 processes =[]
 
 def StartDelayCount():
@@ -112,7 +113,7 @@ def PasteCurrentColors(ColorsList):
         pixels[x]=ColorsList[x]
     pixels.show()
 
-#todo: i want this to be more flashy or something (maybe change the brightness?)
+#todo: test this
 def Goal():
     for x in range(pxlCnt):
         pixels[x]=COLOR_GOALSCORED
@@ -123,20 +124,24 @@ def Goal():
     time.sleep(.25)
     pixels.brightness = 1.0
     while pixels.brightness > 0.1:
-        #todo: slowlhy decrease brightness
+        pixels.brightness-=.15 #todo: dunno if it'll work with this (lowest i've tested is .25 increments
+                                    #uhh basically, floats are funny and idk the gimmicks too much (had this problem with Unity too)
+        time.sleep(.05)
+    pixels.fill(0,0,0)
+    pixels.brightness=1.0
+    pixels.show()
 
-
-
-
-def Countdown_Normal(queue:multiprocessing.Queue):
+#please give this pipeBack
+def Countdown_Normal(pipe:multiprocessing.connection):
     pixels.fill(COLOR_TIMER)
     pixels.show()
     totalSeconds = TIMERTIME
     while totalSeconds > LOWTIME:  # 30 seconds is when it switches to yellow
         time.sleep(.1)
         totalSeconds -= .1
-        if not queue.empty:
-            msg = queue.get(False)
+        if not pipe.poll():
+            print("queue ain't empty")
+            msg = pipe.recv()
             print(msg)
             if msg[:1]=="a":
                 try:
@@ -149,19 +154,20 @@ def Countdown_Normal(queue:multiprocessing.Queue):
                 elif msg[:1]=="g":
                     Goal()
                 pixels.show()
-                queue.get(True)
+                pipe.recv()
                 print("Resuming timer.")
                 StartDelayCount()
                 pixels.fill(COLOR_TIMER)
-
+        else:
+            print("queue was empty")
     start = time.time()
     offset=0.0
     for x in range(300):
         pixels[x] = (255, 255, 0)
         pixels.show()
         #checking this every loop because the lights don't update immediately (there's like a .5 second delay or something
-        if not queue.empty:
-            msg = queue.get(False)
+        if not pipe.poll():
+            msg = pipe.recv()
             if msg[:1]=="a":
                 try:
                     totalSeconds += int(msg[2:])
@@ -175,7 +181,7 @@ def Countdown_Normal(queue:multiprocessing.Queue):
                 elif msg[:1]=="g":
                     Goal()
                 midStart = time.time()
-                queue.get(True)
+                pipe.recv()
                 offset+= time.time()-midStart
                 print("Resuming timer.")
                 StartDelayCount()
@@ -185,8 +191,8 @@ def Countdown_Normal(queue:multiprocessing.Queue):
     while totalSeconds > -1:  # 30 seconds is when it switches to yellow
         time.sleep(1)
         totalSeconds -= 1
-        if not queue.empty:
-            msg = queue.get(False)
+        if not pipe.poll():
+            msg = pipe.recv()
             #add time to the timer, i really don't feel like fixing the colors on this though, will ask seb
             if msg[:1]=="a":
                 try:
@@ -198,7 +204,7 @@ def Countdown_Normal(queue:multiprocessing.Queue):
                     print("Timer currently paused. Waiting.\n")
                 elif msg[:1]=="g":
                     Goal()
-                queue.get(True)
+                pipe.recv()
                 print("Resuming timer.")
                 StartDelayCount()
                 pixels.fill(COLOR_LOWTIME)
@@ -212,21 +218,22 @@ def at_exit():
 
 #bad naming, I know
 # this is the input process that's active for the duration of the timer
-def TimerInput(timerProcess:multiprocessing.Process,queue:multiprocessing.Queue):
+#please give this pipeFront, and CountdownTimer() pipeBack
+def TimerInput(timerProcess:multiprocessing.Process,pipe:multiprocessing.connection):
     while timerProcess.is_alive():
         msg = input("Enter one of the following to edit the current timer:\n"
               "'p'\tPause the timer\n"
               "'a ##'\tAdd ## seconds to the timer\n"
               "'g'\tGoal was scored\n")
-        queue.put(msg)
+        pipe.send(msg)
         #sleep for 1.1 seconds to ensure that the other process receives the input instead of this one
-        time.sleep(.15)
+        time.sleep(.2)
         if msg[:1]=='p' or msg[:1]=='g':
         #pause or goal scored
             secmsg = input("Press enter to continue...\n")
-            queue.put(secmsg)
+            pipe.send(secmsg)
         # i know this prevents rapid pausing and unpausing... but i don't have a good way to test this rn
-        time.sleep(.15)
+        time.sleep(.2)
 
 #todo: idk if this works (i imported
 def SuddenDeath(queue:multiprocessing.Queue):
@@ -270,14 +277,14 @@ if __name__=='__main__':
             if STARTCOUNTDOWN:
                 StartDelayCount()
             #idk how to use Pools so I won't
-            timerProcess = multiprocessing.Process(target=Countdown_Normal, args=[queue])
+            timerProcess = multiprocessing.Process(target=Countdown_Normal, args=[pipeBack])
             #inputProcess = multiprocessing.Process(target=TimerInput,args=[queue])
             processes.append(timerProcess)
             timerProcess.start()
             #inputProcess.start()
             #am i doing this right?
             #timerProcess.join()
-            TimerInput(timerProcess,queue)
+            TimerInput(timerProcess,pipeFront)
             timerProcess.close()
             #inputProcess.terminate()
             processes.pop(1)
@@ -286,13 +293,13 @@ if __name__=='__main__':
             if MatchOver==2: #terminate program
                 continueProgram=False
             elif MatchOver==1: #sudden death
-                timerProcess = multiprocessing.Process(target=SuddenDeath,args=[queue])
+                timerProcess = multiprocessing.Process(target=SuddenDeath,args=[pipeBack])
                 #yes i ctrlc ctrlv the next 9 lines, no i am not removing the comments
                 #inputProcess = multiprocessing.Process(target=TimerInput, args=[queue])
                 
                 timerProcess.start()
                 processes.append(timerProcess)
-                TimerInput(timerProcess,queue)
+                TimerInput(timerProcess,pipeFront)
                 #inputProcess.start()
                 # am i doing this right?
                 #timerProcess.join()
