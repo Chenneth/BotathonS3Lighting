@@ -459,7 +459,7 @@ if __name__=='__main__':
         while continueProgram:
             StartTimer()
             #ask if sudden death
-            MatchOver
+            MatchOver = ""
             while True:
                 MatchOver = input("\nIs the match over? Enter 0 to reset the timer, 1 to start sudden death, or 2 to turn off all LEDs and terminate the program.\nSudden death will start with a countdown.\n")
                 if MatchOver[:1]=='0' or MatchOver[:1]=='1' or MatchOver[:1]=='2':
